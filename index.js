@@ -1,3 +1,24 @@
+﻿function normalizeVoice(input) {
+  if (!input) return 'alloy';
+  const normalized = input.trim().toLowerCase();
+  const allowed = new Map([
+    ['alloy', 'alloy'],
+    ['echo', 'echo'],
+    ['fable', 'fable'],
+    ['onyx', 'onyx'],
+    ['nova', 'nova'],
+    ['shimmer', 'shimmer'],
+    ['coral', 'coral'],
+    ['verse', 'verse'],
+    ['ballad', 'ballad'],
+    ['ash', 'ash'],
+    ['sage', 'sage'],
+    ['marin', 'marin'],
+    ['cedar', 'cedar'],
+  ]);
+
+  return allowed.get(normalized) ?? 'echo';
+}
 import 'dotenv/config';
 import { Client, GatewayIntentBits } from 'discord.js';
 import {
@@ -19,7 +40,7 @@ if (missingEnv.length > 0) {
   process.exit(1);
 }
 
-const VOICE_NAME = process.env.TTS_VOICE ?? 'alloy';
+const VOICE_NAME = process.env.TTS_VOICE ?? 'echo';
 
 const client = new Client({
   intents: [
@@ -31,64 +52,106 @@ const client = new Client({
 });
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-let playbackQueue = Promise.resolve();
+const guildAudioState = new Map();
 
 client.once('clientReady', () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
-client.on('messageCreate', (message) => {
+client.on('messageCreate', async (message) => {
   if (!message.guild || message.author.bot) return;
 
   const text = message.content.trim();
   if (!text) return;
 
-  const voiceChannel = message.member?.voice?.channel;
-  if (!voiceChannel) {
-    message.reply('음성 채널에 먼저 들어와 주세요.').catch(() => void 0);
+  if (text.toLowerCase() === '/quit') {
+    const state = guildAudioState.get(message.guild.id);
+    if (!state) {
+      await message.reply('현재 음성 채널에 연결되어 있지 않아요.').catch(() => void 0);
+      return;
+    }
+
+    cleanupState(message.guild.id);
+    await message.reply('음성 채널에서 나갈게요.').catch(() => void 0);
     return;
   }
 
-  playbackQueue = playbackQueue
-    .then(() => speakInVoiceChannel(voiceChannel, text))
-    .catch(async (error) => {
-      console.error('Playback error', error);
-      await message.reply('음성 재생에 실패했어요. 잠시 후 다시 시도해 주세요.').catch(() => void 0);
-    });
+  const voiceChannel = message.member?.voice?.channel;
+  if (!voiceChannel) {
+    await message.reply('음성 채널에 먼저 들어와 주세요.').catch(() => void 0);
+    return;
+  }
+
+  try {
+    const state = await ensureConnection(voiceChannel);
+    state.queue = state.queue
+      .then(() => playText(state, text))
+      .catch(async (error) => {
+        console.error('Playback error', error);
+        await message
+          .reply('음성 재생에 실패했어요. 잠시 후 다시 시도해 주세요.')
+          .catch(() => void 0);
+      });
+  } catch (error) {
+    console.error('Voice connection error', error);
+    await message.reply('음성 채널 연결에 실패했어요. 잠시 후 다시 시도해 주세요.').catch(() => void 0);
+  }
 });
 
-async function speakInVoiceChannel(voiceChannel, text) {
-  const connection = joinVoiceChannel({
-    channelId: voiceChannel.id,
-    guildId: voiceChannel.guild.id,
-    adapterCreator: voiceChannel.guild.voiceAdapterCreator,
-    selfDeaf: false,
-  });
+async function ensureConnection(voiceChannel) {
+  let state = guildAudioState.get(voiceChannel.guild.id);
 
-  try {
-    await entersState(connection, VoiceConnectionStatus.Ready, 10_000);
-  } catch (error) {
-    connection.destroy();
-    throw new Error('Voice connection timeout');
+  if (state && state.connection.joinConfig.channelId !== voiceChannel.id) {
+    cleanupState(voiceChannel.guild.id);
+    state = undefined;
   }
 
-  try {
-    const audioResource = await synthesizeToResource(text);
+  if (!state) {
+    const connection = joinVoiceChannel({
+      channelId: voiceChannel.id,
+      guildId: voiceChannel.guild.id,
+      adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+      selfDeaf: false,
+    });
+
     const player = createAudioPlayer();
-    const subscription = connection.subscribe(player);
+    connection.subscribe(player);
 
-    player.play(audioResource);
+    state = {
+      connection,
+      player,
+      queue: Promise.resolve(),
+    };
 
-    await entersState(player, AudioPlayerStatus.Playing, 5_000);
-    const playbackTimeout = Math.min(120_000, Math.max(10_000, text.length * 600));
-    await entersState(player, AudioPlayerStatus.Idle, playbackTimeout);
+    connection.on(VoiceConnectionStatus.Disconnected, async () => {
+      try {
+        await Promise.race([
+          entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+          entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+        ]);
+      } catch {
+        cleanupState(voiceChannel.guild.id);
+      }
+    });
 
-    subscription?.unsubscribe();
-    connection.destroy();
-  } catch (error) {
-    connection.destroy();
-    throw error;
+    connection.on(VoiceConnectionStatus.Destroyed, () => {
+      cleanupState(voiceChannel.guild.id);
+    });
+
+    guildAudioState.set(voiceChannel.guild.id, state);
   }
+
+  await entersState(state.connection, VoiceConnectionStatus.Ready, 10_000);
+  return state;
+}
+
+async function playText(state, text) {
+  const resource = await synthesizeToResource(text);
+  state.player.play(resource);
+
+  await entersState(state.player, AudioPlayerStatus.Playing, 5_000);
+  const playbackTimeout = Math.min(120_000, Math.max(10_000, text.length * 600));
+  await entersState(state.player, AudioPlayerStatus.Idle, playbackTimeout);
 }
 
 async function synthesizeToResource(text) {
@@ -105,6 +168,28 @@ async function synthesizeToResource(text) {
   const { stream: demuxedStream, type } = await demuxProbe(stream);
   return createAudioResource(demuxedStream, { inputType: type });
 }
+
+function cleanupState(guildId) {
+  const state = guildAudioState.get(guildId);
+  if (!state) return;
+
+  try {
+    state.player.stop(true);
+  } catch {
+    // ignore
+  }
+
+  try {
+    if (state.connection.state.status !== VoiceConnectionStatus.Destroyed) {
+      state.connection.destroy();
+    }
+  } catch {
+    // ignore
+  }
+
+  guildAudioState.delete(guildId);
+}
+
 (async () => {
   try {
     await client.login(process.env.DISCORD_TOKEN);
