@@ -1,4 +1,4 @@
-﻿import 'dotenv/config';
+import 'dotenv/config';
 import { Client, GatewayIntentBits } from 'discord.js';
 import {
   AudioPlayerStatus,
@@ -10,7 +10,7 @@ import {
   joinVoiceChannel,
 } from '@discordjs/voice';
 import OpenAI from 'openai';
-import { Readable } from 'stream';
+import { PassThrough } from 'stream';
 
 const REQUIRED_ENV = ['DISCORD_TOKEN', 'OPENAI_API_KEY'];
 const missingEnv = REQUIRED_ENV.filter((key) => !process.env[key]);
@@ -100,11 +100,11 @@ async function synthesizeToResource(text) {
   });
 
   const buffer = Buffer.from(await response.arrayBuffer());
-  const stream = Readable.from(buffer);
+  const stream = new PassThrough();
+  stream.end(buffer);
   const { stream: demuxedStream, type } = await demuxProbe(stream);
   return createAudioResource(demuxedStream, { inputType: type });
 }
-
 (async () => {
   try {
     await client.login(process.env.DISCORD_TOKEN);
@@ -113,3 +113,4 @@ async function synthesizeToResource(text) {
     process.exit(1);
   }
 })();
+
