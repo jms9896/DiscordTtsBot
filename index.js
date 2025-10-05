@@ -1,5 +1,5 @@
-import 'dotenv/config';
-import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } from 'discord.js';
+﻿import 'dotenv/config';
+import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, MessageFlags } from 'discord.js';
 import {
   AudioPlayerStatus,
   VoiceConnectionStatus,
@@ -36,6 +36,8 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 const guildAudioState = new Map();
 const guildChannelConfig = new Map();
 
+const ephemeral = (content) => ({ content, flags: MessageFlags.Ephemeral });
+
 client.once('clientReady', () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
@@ -45,7 +47,7 @@ client.on('interactionCreate', async (interaction) => {
 
   const guildId = interaction.guildId;
   if (!guildId) {
-    await interaction.reply({ content: '이 명령은 서버에서만 사용할 수 있어요.', ephemeral: true }).catch(() => void 0);
+    await interaction.reply(ephemeral('이 명령은 서버에서만 사용할 수 있어요.')).catch(() => void 0);
     return;
   }
 
@@ -53,38 +55,38 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.commandName === 'tts') {
       const text = interaction.options.getString('text', true).trim();
       if (!text.length) {
-        await interaction.reply({ content: '말할 문장을 입력해 주세요.', ephemeral: true });
+        await interaction.reply(ephemeral('말할 문장을 입력해 주세요.'));
         return;
       }
 
       const voiceChannel = interaction.member?.voice?.channel;
       if (!voiceChannel) {
-        await interaction.reply({ content: '먼저 음성 채널에 참여해 주세요.', ephemeral: true });
+        await interaction.reply(ephemeral('먼저 음성 채널에 참여해 주세요.'));
         return;
       }
 
-      await interaction.reply({ content: `재생 대기열에 추가: ${text}`, ephemeral: true });
+      await interaction.reply(ephemeral(`재생 대기열에 추가: ${text}`));
       await enqueueSpeech(voiceChannel, text, async () => {
-        await interaction.followUp({ content: '재생에 실패했어요. 잠시 후 다시 시도해 주세요.', ephemeral: true }).catch(() => void 0);
+        await interaction.followUp(ephemeral('재생에 실패했어요. 잠시 후 다시 시도해 주세요.')).catch(() => void 0);
       });
       return;
     }
 
     if (interaction.commandName === 'voiceroom') {
       guildChannelConfig.set(guildId, interaction.channelId);
-      await interaction.reply({ content: '이 채널의 메시지만 읽을게요.', ephemeral: true });
+      await interaction.reply(ephemeral('이 채널의 메시지만 읽을게요.'));
       return;
     }
 
     if (interaction.commandName === 'quit') {
       cleanupState(guildId);
-      await interaction.reply({ content: '음성 채널을 떠났어요.', ephemeral: true });
+      await interaction.reply(ephemeral('음성 채널을 떠났어요.'));
     }
   } catch (error) {
     console.error('Interaction handling failed', error);
     if (interaction.isRepliable()) {
       const responseMethod = interaction.deferred || interaction.replied ? 'followUp' : 'reply';
-      await interaction[responseMethod]({ content: '명령 실행 중 오류가 발생했어요.', ephemeral: true }).catch(() => void 0);
+      await interaction[responseMethod](ephemeral('명령 실행 중 오류가 발생했어요.')).catch(() => void 0);
     }
   }
 });
@@ -280,3 +282,11 @@ async function registerCommands() {
     process.exit(1);
   }
 })();
+
+
+
+
+
+
+
+
