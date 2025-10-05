@@ -114,8 +114,11 @@ client.on('messageCreate', async (message) => {
 async function enqueueSpeech(voiceChannel, text, onError) {
   try {
     const state = await ensureConnection(voiceChannel);
+    const preparedSpeech = synthesizeToResource(text).catch((error) => {
+      throw error;
+    });
     state.queue = state.queue
-      .then(() => playText(state, text))
+      .then(() => playText(state, text, preparedSpeech))
       .catch(async (error) => {
         console.error('Playback error', error);
         if (onError) await onError();
@@ -173,8 +176,9 @@ async function ensureConnection(voiceChannel) {
   return state;
 }
 
-async function playText(state, text) {
-  const resource = await synthesizeToResource(text);
+async function playText(state, text, preparedResourcePromise) {
+  const resourcePromise = preparedResourcePromise ?? synthesizeToResource(text);
+  const resource = await resourcePromise;
   state.player.play(resource);
 
   await entersState(state.player, AudioPlayerStatus.Playing, 5_000);
