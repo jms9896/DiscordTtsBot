@@ -84,7 +84,7 @@ const sanitizeText = (input) => {
 
   const expanded = expand(expand(replaced, 'ㄴ', '노'), 'ㅇ', '응');
 
-  // 동일 문자 연속 입력은 최대 5자까지만 읽음
+  // 동일 문자 연속 입력은 최대 4자까지만 읽음
   return expanded.replace(/(.)\1{4,}/g, (m, ch) => ch.repeat(4));
 };
 
