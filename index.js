@@ -71,6 +71,7 @@ const sanitizeText = (input) => {
     ['ㅆㅃ', '씨빨'],
     ['ㅆㅂ', '쒸발'],
     ['ㅈㄹ', '지랄'],
+    ['ㅇㅋ', 'okay']
   ];
 
   const replaced = replacements.reduce(
@@ -91,6 +92,10 @@ const ephemeral = (content) => ({ content, flags: MessageFlags.Ephemeral });
 
 client.once('clientReady', () => {
   console.log(`Logged in as ${client.user.tag}`);
+});
+
+client.on('voiceStateUpdate', () => {
+  ensureOccupancy();
 });
 
 client.on('interactionCreate', async (interaction) => {
@@ -295,6 +300,23 @@ function cleanupState(guildId) {
   guildAudioState.delete(guildId);
 }
 
+function ensureOccupancy() {
+  for (const [guildId, state] of guildAudioState.entries()) {
+    try {
+      const channelId = state.connection.joinConfig.channelId;
+      const channel = client.channels.cache.get(channelId);
+      const hasListener = channel?.isVoiceBased?.()
+        ? channel.members.some((m) => !m.user.bot)
+        : false;
+      if (!hasListener) {
+        cleanupState(guildId);
+      }
+    } catch {
+      cleanupState(guildId);
+    }
+  }
+}
+
 function normalizeVoice(input) {
   if (!input) return 'echo';
   const normalized = input.trim().toLowerCase();
@@ -390,7 +412,6 @@ async function registerCommands() {
     process.exit(1);
   }
 })();
-
 
 
 
